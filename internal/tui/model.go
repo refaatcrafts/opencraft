@@ -937,10 +937,11 @@ Requirements:
 1) Inspect repository context before writing by reading README.md and a few key project files/directories.
 2) Write AGENTS.md at exactly this path: AGENTS.md.
 3) Overwrite AGENTS.md if it already exists. Do not create backups.
-4) File format must be:
+4) File format must be pure markdown:
    - First line: # AGENTS.md instructions for %s
-   - Then a single <INSTRUCTIONS>...</INSTRUCTIONS> block.
-5) Inside <INSTRUCTIONS>, include practical, repo-specific guidance:
+   - Use markdown headings (##) to organize sections.
+   - Do NOT wrap content in XML tags.
+5) Include practical, repo-specific guidance:
    - Role and responsibilities for the coding agent
    - Workflow expectations (planning, edits, verification)
    - Code quality/style rules aligned with this repo
