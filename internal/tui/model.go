@@ -592,10 +592,51 @@ func (m Model) headerStateLabel() string {
 	}
 }
 
+var logoLines = []string{
+	` /$$$$$$                                /$$$$$$                  /$$$$$ /$$    `,
+	`/$$__  $$                              /$$__  $$                /$$__  $| $$    `,
+	`| $$  \ $$  /$$$$$$   /$$$$$$  /$$$$$$ | $$  \__/ /$$$$$$  /$$$$$$$| $$ \/$$/$$$$$$`,
+	`| $$  | $$ /$$__  $$ /$$__  $$| $$__  $| $$      /$$__  $$|____  $| $$$$$ |_  $$_/`,
+	`| $$  | $$| $$  \ $$| $$$$$$$$| $$  \ $| $$     | $$  \__/ /$$$$$$| $$_/   | $$  `,
+	`| $$  | $$| $$  | $$| $$_____/| $$  | $| $$    $| $$      /$$__  $| $$     | $$ /$$`,
+	`|  $$$$$$/| $$$$$$$/|  $$$$$$$| $$  | $|  $$$$$$| $$     |  $$$$$$| $$     |  $$$$/`,
+	` \______/ | $$____/  \_______/|__/  |__/\______/|__/      \_______|__/      \___/  `,
+	`          | $$                                                                      `,
+	`          | $$                                                                      `,
+	`          |__/                                                                      `,
+}
+
+func renderLogo() string {
+	var styled []string
+	for i, line := range logoLines {
+		var s lipgloss.Style
+		switch {
+		case i < 4:
+			s = LogoLineTopStyle
+		case i < 7:
+			s = LogoLineMidStyle
+		default:
+			s = LogoLineBotStyle
+		}
+		styled = append(styled, s.Render(line))
+	}
+	return strings.Join(styled, "\n")
+}
+
 func (m Model) renderEmptyState(width, height int) string {
 	cardWidth := min(max(24, width-12), 56)
 	bodyWidth := max(18, cardWidth)
-	lines := []string{
+
+	if m.layout.compact {
+		lines := []string{
+			EmptyHintStyle.Render("Try one of these"),
+			EmptyActionStyle.Render("summarize this repository"),
+			EmptyActionStyle.Render("trace the tool call flow"),
+		}
+		return placeArea(width, height, strings.Join(lines, "\n"), lipgloss.Center, lipgloss.Center)
+	}
+
+	bodyLines := []string{
 		EmptyBodyStyle.Render(wrap.String("Ask OpenCraft to inspect code, explain a file, or make a change.", bodyWidth)),
 		"",
 		EmptyHintStyle.Render("Try one of these"),
@@ -603,14 +644,18 @@ func (m Model) renderEmptyState(width, height int) string {
 		EmptyActionStyle.Render("explain the main entrypoint"),
 		EmptyActionStyle.Render("trace the tool call flow"),
 	}
-	if m.layout.compact {
-		lines = []string{
-			EmptyHintStyle.Render("Try one of these"),
-			EmptyActionStyle.Render("summarize this repository"),
-			EmptyActionStyle.Render("trace the tool call flow"),
-		}
+	body := strings.Join(bodyLines, "\n")
+
+	if width >= 80 {
+		logo := renderLogo()
+		content := lipgloss.JoinVertical(lipgloss.Center, logo, "", body)
+		contentHeight := lipgloss.Height(content)
+		topPad := max(0, (height-contentHeight)/3)
+		padded := strings.Repeat("\n", topPad) + content
+		return placeArea(width, height, padded, lipgloss.Center, lipgloss.Top)
 	}
-	return placeArea(width, height, strings.Join(lines, "\n"), lipgloss.Center, lipgloss.Center)
+
+	return placeArea(width, height, body, lipgloss.Center, lipgloss.Center)
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) bool {

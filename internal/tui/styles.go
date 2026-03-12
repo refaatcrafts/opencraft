@@ -232,3 +232,15 @@ var CommandPaletteScrollStyle = lipgloss.NewStyle().
 
 var CommandPaletteHintStyle = lipgloss.NewStyle().
 	Foreground(colorSubtle)
+
+var LogoLineTopStyle = lipgloss.NewStyle().
+	Foreground(colorAccentBlue).
+	Bold(true)
+
+var LogoLineMidStyle = lipgloss.NewStyle().
+	Foreground(colorAccentIndigo).
+	Bold(true)
+
+var LogoLineBotStyle = lipgloss.NewStyle().
+	Foreground(colorAccentPink).
+	Bold(true)
