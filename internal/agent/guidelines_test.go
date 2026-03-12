@@ -59,6 +59,28 @@ func TestLoadNearestAGENTSInstructionsWalksParents(t *testing.T) {
 	}
 }
 
+func TestExtractGuidelinesPureMarkdown(t *testing.T) {
+	input := `# AGENTS.md instructions for myproject
+
+## Role
+You are a coding agent.
+
+## Code Style
+- Use gofmt.
+- Keep functions short.
+`
+	got := extractGuidelines(input)
+	if strings.Contains(got, "<INSTRUCTIONS>") {
+		t.Fatalf("should not contain XML tags, got %q", got)
+	}
+	if !strings.Contains(got, "## Role") {
+		t.Fatalf("missing Role section in %q", got)
+	}
+	if !strings.Contains(got, "## Code Style") {
+		t.Fatalf("missing Code Style section in %q", got)
+	}
+}
+
 func TestTruncateGuidelines(t *testing.T) {
 	raw := strings.Repeat("x", 64)
 	got := truncateGuidelines(raw, 20)
