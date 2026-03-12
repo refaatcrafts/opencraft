@@ -2,7 +2,10 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -36,6 +39,20 @@ const (
 	mouseWheelDelta         = 3
 )
 
+const (
+	commandInitAGENTS = "init_agents"
+	commandClearChat  = "clear_chat"
+	commandClearInput = "clear_input"
+	commandCopySelect = "copy_selection"
+)
+
+type paletteCommand struct {
+	id          string
+	label       string
+	description string
+	shortcut    string
+}
+
 type layoutState struct {
 	marginX        int
 	panelWidth     int
@@ -59,6 +76,7 @@ type Model struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	agentChan chan tea.Msg
+	cwd       string
 
 	state     appState
 	chat      chat.Model
@@ -73,11 +91,21 @@ type Model struct {
 	ready          bool
 	layout         layoutState
 	statusMessage  string
+	commandStatus  string
+	guidelinesPath string
+	paletteOpen    bool
+	paletteIndex   int
+	paletteScroll  int
+	paletteItems   []paletteCommand
 }
 
 // New creates a fully initialised TUI model.
 func New(cfg *config.Config, ag *agent.Agent) Model {
 	ctx, cancel := context.WithCancel(context.Background())
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
 
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
@@ -127,10 +155,37 @@ func New(cfg *config.Config, ag *agent.Agent) Model {
 		ctx:       ctx,
 		cancel:    cancel,
 		agentChan: make(chan tea.Msg, 64),
+		cwd:       cwd,
 		spinner:   sp,
 		textarea:  ta,
 		chat:      chatModel,
 		viewport:  vp,
+		paletteItems: []paletteCommand{
+			{
+				id:          commandInitAGENTS,
+				label:       "Initialize AGENTS.md",
+				description: "Use AI to generate a project-specific AGENTS.md from repository context.",
+				shortcut:    "enter",
+			},
+			{
+				id:          commandClearChat,
+				label:       "Clear Chat History",
+				description: "Remove all chat messages from the current session view.",
+				shortcut:    "enter",
+			},
+			{
+				id:          commandClearInput,
+				label:       "Clear Input",
+				description: "Reset the message composer.",
+				shortcut:    "enter",
+			},
+			{
+				id:          commandCopySelect,
+				label:       "Copy Selection",
+				description: "Copy currently selected chat text to clipboard.",
+				shortcut:    "enter",
+			},
+		},
 	}
 }
 
@@ -153,10 +208,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport(false)
 
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
+		if msg.Type == tea.KeyCtrlC {
 			m.cancel()
 			return m, tea.Quit
+		}
+
+		if m.paletteOpen {
+			handled, cmd := m.handlePaletteKey(msg)
+			if handled {
+				m.refreshViewport(false)
+			}
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			break
+		}
+
+		if m.state == stateIdle && msg.Type == tea.KeyRunes && string(msg.Runes) == "/" && m.textarea.Value() == "" {
+			m.openPalette()
+			break
+		}
+
+		switch msg.Type {
 		case tea.KeyEsc:
 			if m.chat.ClearSelection() {
 				m.setStatusMessage("selection cleared")
@@ -193,7 +266,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
-		if !m.ready || m.layout.tooSmall {
+		if m.paletteOpen || !m.ready || m.layout.tooSmall {
 			break
 		}
 		if m.handleMouse(msg) {
@@ -201,16 +274,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case userSubmitMsg:
-		m.chat.AddUser(msg.text)
-		m.state = stateThinking
-		m.activeToolName = ""
-		m.streamBuf = ""
-		m.refreshViewport(true)
-		cmds = append(cmds,
-			m.startAgent(msg.text),
-			m.waitForAgent(),
-			m.spinner.Tick,
-		)
+		cmds = append(cmds, m.beginAgentRun(internalCommandRunMsg{
+			prompt: msg.text,
+			hidden: false,
+		})...)
+
+	case internalCommandRunMsg:
+		cmds = append(cmds, m.beginAgentRun(msg)...)
+
+	case agent.GuidelinesLoadedMsg:
+		m.guidelinesPath = m.guidelineDisplayPath(msg.Path)
+		meta := map[string]string{
+			"event": "loaded",
+			"path":  m.guidelinesPath,
+		}
+		metaJSON, _ := json.Marshal(meta)
+		m.chat.AddToolCall("AGENTS.md", string(metaJSON))
+		m.chat.AddToolResult("AGENTS.md", "Loaded repository instructions from "+m.guidelinesPath, false)
+		m.refreshViewport(false)
+		cmds = append(cmds, m.waitForAgent())
 
 	case agent.StreamChunkMsg:
 		if m.state != stateStreaming {
@@ -246,6 +328,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = stateIdle
 		m.activeToolName = ""
+		m.commandStatus = ""
 		m.refreshViewport(true)
 
 	case agent.AgentErrMsg:
@@ -256,6 +339,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.AddError(msg.Err.Error())
 		m.state = stateIdle
 		m.activeToolName = ""
+		m.commandStatus = ""
 		m.refreshViewport(true)
 
 	case spinner.TickMsg:
@@ -285,7 +369,7 @@ func (m Model) View() string {
 		m.renderInput(),
 	)
 	content = lipgloss.NewStyle().Margin(0, m.layout.marginX).Render(content)
-	return lipgloss.Place(
+	root := lipgloss.Place(
 		m.width,
 		m.height,
 		lipgloss.Left,
@@ -294,6 +378,10 @@ func (m Model) View() string {
 		lipgloss.WithWhitespaceChars(" "),
 		lipgloss.WithWhitespaceBackground(AppStyle.GetBackground()),
 	)
+	if m.paletteOpen {
+		return m.renderPaletteOverlay(root)
+	}
+	return root
 }
 
 func (m *Model) updateLayoutAndSize() {
@@ -412,9 +500,9 @@ func (m Model) renderChatPanel() string {
 func (m Model) renderStatusBar() string {
 	innerWidth := m.layout.panelWidth - StatusBarStyle.GetHorizontalFrameSize()
 	leftText := m.statusSummary()
-	rightText := "enter send  alt+enter newline  drag select  esc clear"
+	rightText := "/ commands  enter send  alt+enter newline  drag select  esc clear"
 	if m.layout.compact {
-		rightText = "enter send  drag select"
+		rightText = "/ commands  enter send  drag select"
 	}
 
 	left := StatusBarActiveStyle.Render(leftText)
@@ -464,17 +552,22 @@ func (m Model) statusSummary() string {
 		return m.statusMessage
 	}
 
+	suffix := m.guidelinesStatusSuffix()
+	if m.commandStatus != "" && m.state != stateIdle {
+		return m.spinner.View() + " " + m.commandStatus + suffix
+	}
+
 	switch m.state {
 	case stateThinking:
-		return m.spinner.View() + " Thinking"
+		return m.spinner.View() + " Thinking" + suffix
 	case stateStreaming:
-		return m.spinner.View() + " Writing response"
+		return m.spinner.View() + " Writing response" + suffix
 	case stateToolRunning:
 		tool := m.activeToolName
 		if tool == "" {
 			tool = "tool"
 		}
-		return m.spinner.View() + " Running " + tool
+		return m.spinner.View() + " Running " + tool + suffix
 	default:
 		if m.chat.HasSelection() {
 			return "Selection active"
@@ -603,6 +696,310 @@ func (m *Model) copySelection(selected string) {
 
 func (m *Model) setStatusMessage(message string) {
 	m.statusMessage = message
+}
+
+func (m *Model) beginAgentRun(req internalCommandRunMsg) []tea.Cmd {
+	if strings.TrimSpace(req.prompt) == "" {
+		return nil
+	}
+
+	if !req.hidden {
+		m.chat.AddUser(req.prompt)
+	}
+	m.chat.ClearSelection()
+	m.statusMessage = ""
+	m.commandStatus = req.statusLabel
+	m.state = stateThinking
+	m.activeToolName = ""
+	m.streamBuf = ""
+	m.guidelinesPath = ""
+	m.refreshViewport(true)
+
+	return []tea.Cmd{
+		m.startAgent(req.prompt),
+		m.waitForAgent(),
+		m.spinner.Tick,
+	}
+}
+
+func (m Model) guidelinesStatusSuffix() string {
+	if m.guidelinesPath == "" {
+		return ""
+	}
+	return " • AGENTS.md loaded (" + m.guidelinesPath + ")"
+}
+
+func (m Model) guidelineDisplayPath(path string) string {
+	rel, err := filepath.Rel(m.cwd, path)
+	if err != nil || rel == "" {
+		return path
+	}
+	if strings.HasPrefix(rel, "..") {
+		return path
+	}
+	return rel
+}
+
+func (m *Model) openPalette() {
+	if len(m.paletteItems) == 0 || m.state != stateIdle {
+		return
+	}
+	m.paletteOpen = true
+	m.paletteIndex = 0
+	m.paletteScroll = 0
+	m.statusMessage = ""
+}
+
+func (m *Model) closePalette() {
+	m.paletteOpen = false
+}
+
+func (m *Model) handlePaletteKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.closePalette()
+		return true, nil
+	case tea.KeyEnter:
+		cmd := m.runSelectedPaletteCommand()
+		m.closePalette()
+		return true, cmd
+	case tea.KeyUp:
+		m.movePaletteSelection(-1)
+		return true, nil
+	case tea.KeyDown:
+		m.movePaletteSelection(1)
+		return true, nil
+	case tea.KeyPgUp:
+		m.movePaletteSelection(-m.paletteVisibleCount())
+		return true, nil
+	case tea.KeyPgDown:
+		m.movePaletteSelection(m.paletteVisibleCount())
+		return true, nil
+	case tea.KeyHome:
+		m.paletteIndex = 0
+		m.ensurePaletteSelectionVisible()
+		return true, nil
+	case tea.KeyEnd:
+		if n := len(m.paletteItems); n > 0 {
+			m.paletteIndex = n - 1
+			m.ensurePaletteSelectionVisible()
+		}
+		return true, nil
+	}
+
+	if msg.Type != tea.KeyRunes {
+		return false, nil
+	}
+
+	switch string(msg.Runes) {
+	case "j":
+		m.movePaletteSelection(1)
+		return true, nil
+	case "k":
+		m.movePaletteSelection(-1)
+		return true, nil
+	}
+	return false, nil
+}
+
+func (m *Model) movePaletteSelection(delta int) {
+	n := len(m.paletteItems)
+	if n == 0 {
+		return
+	}
+	m.paletteIndex += delta
+	if m.paletteIndex < 0 {
+		m.paletteIndex = n - 1
+	}
+	if m.paletteIndex >= n {
+		m.paletteIndex = 0
+	}
+	m.ensurePaletteSelectionVisible()
+}
+
+func (m *Model) ensurePaletteSelectionVisible() {
+	visible := m.paletteVisibleCount()
+	if m.paletteIndex < m.paletteScroll {
+		m.paletteScroll = m.paletteIndex
+	}
+	if m.paletteIndex >= m.paletteScroll+visible {
+		m.paletteScroll = m.paletteIndex - visible + 1
+	}
+	if m.paletteScroll < 0 {
+		m.paletteScroll = 0
+	}
+}
+
+func (m Model) paletteVisibleCount() int {
+	visible := m.height - 18
+	if m.layout.compact {
+		visible = m.height - 14
+	}
+	if visible < 4 {
+		visible = 4
+	}
+	if visible > 12 {
+		visible = 12
+	}
+	return visible
+}
+
+func (m *Model) runSelectedPaletteCommand() tea.Cmd {
+	if len(m.paletteItems) == 0 || m.paletteIndex < 0 || m.paletteIndex >= len(m.paletteItems) {
+		return nil
+	}
+
+	switch m.paletteItems[m.paletteIndex].id {
+	case commandInitAGENTS:
+		return func() tea.Msg {
+			return internalCommandRunMsg{
+				prompt:      m.buildAGENTSInitPrompt(),
+				hidden:      true,
+				statusLabel: "Generating AGENTS.md with AI",
+			}
+		}
+	case commandClearChat:
+		m.chat = chat.New()
+		m.chat.SetSize(m.viewport.Width, m.viewport.Height)
+		m.streamBuf = ""
+		m.commandStatus = ""
+		m.setStatusMessage("chat history cleared")
+		m.refreshViewport(true)
+	case commandClearInput:
+		m.textarea.Reset()
+		m.setStatusMessage("input cleared")
+	case commandCopySelect:
+		selected := m.chat.SelectedText()
+		if selected == "" {
+			m.setStatusMessage("no active selection to copy")
+		} else {
+			m.copySelection(selected)
+		}
+	}
+	return nil
+}
+
+func (m Model) buildAGENTSInitPrompt() string {
+	projectName := filepath.Base(m.cwd)
+	if projectName == "" || projectName == "." || projectName == string(filepath.Separator) {
+		projectName = "project"
+	}
+
+	return strings.TrimSpace(fmt.Sprintf(`
+Initialize AGENTS.md for this repository.
+
+Requirements:
+1) Inspect repository context before writing by reading README.md and a few key project files/directories.
+2) Write AGENTS.md at exactly this path: AGENTS.md.
+3) Overwrite AGENTS.md if it already exists. Do not create backups.
+4) File format must be:
+   - First line: # AGENTS.md instructions for %s
+   - Then a single <INSTRUCTIONS>...</INSTRUCTIONS> block.
+5) Inside <INSTRUCTIONS>, include practical, repo-specific guidance:
+   - Role and responsibilities for the coding agent
+   - Workflow expectations (planning, edits, verification)
+   - Code quality/style rules aligned with this repo
+   - Testing/validation expectations with concrete commands when known
+   - Tool usage and safety boundaries relevant to this codebase
+6) Keep instructions concise, actionable, and specific to this repository (not generic boilerplate).
+7) Use tools to complete the work, and finish after AGENTS.md is written.
+`, projectName))
+}
+
+func (m Model) renderPaletteOverlay(_ string) string {
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		m.renderCommandPalette(),
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceBackground(AppStyle.GetBackground()),
+	)
+}
+
+func (m Model) renderCommandPalette() string {
+	if len(m.paletteItems) == 0 {
+		return CommandPaletteBoxStyle.Render("No commands")
+	}
+
+	width := min(max(54, m.layout.panelWidth-14), 88)
+	if m.layout.compact {
+		width = m.layout.panelWidth - 2
+	}
+	if width < 40 {
+		width = 40
+	}
+
+	boxStyle := CommandPaletteBoxStyle.Width(width)
+	innerWidth := width - boxStyle.GetHorizontalFrameSize()
+	visible := min(len(m.paletteItems), m.paletteVisibleCount())
+	if visible < 1 {
+		visible = 1
+	}
+
+	if maxScroll := max(0, len(m.paletteItems)-visible); m.paletteScroll > maxScroll {
+		m.paletteScroll = maxScroll
+	}
+
+	start := m.paletteScroll
+	end := min(len(m.paletteItems), start+visible)
+
+	var rows []string
+	if start > 0 {
+		rows = append(rows, CommandPaletteScrollStyle.Width(innerWidth).Render("..."))
+	}
+	for i := start; i < end; i++ {
+		rows = append(rows, m.renderPaletteCommandRow(innerWidth, m.paletteItems[i], i == m.paletteIndex))
+	}
+	if end < len(m.paletteItems) {
+		rows = append(rows, CommandPaletteScrollStyle.Width(innerWidth).Render("..."))
+	}
+
+	selected := m.paletteItems[m.paletteIndex]
+	index := fmt.Sprintf("%d/%d", m.paletteIndex+1, len(m.paletteItems))
+	title := lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		CommandPaletteTitleStyle.Render("Commands"),
+		"  ",
+		CommandPaletteIndexStyle.Render(index),
+	)
+
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		CommandPaletteMutedStyle.Render("Use up/down to choose, enter to run, esc to close."),
+		"",
+		strings.Join(rows, "\n"),
+		"",
+		CommandPaletteDescStyle.Render(wrap.String(selected.description, innerWidth)),
+		"",
+		CommandPaletteHintStyle.Render("↑/↓ choose  pgup/pgdn scroll  enter confirm  esc cancel"),
+	)
+	return boxStyle.Render(body)
+}
+
+func (m Model) renderPaletteCommandRow(width int, item paletteCommand, selected bool) string {
+	shortcut := CommandPaletteShortcutStyle.Render(item.shortcut)
+	shortcutWidth := lipgloss.Width(xansi.Strip(item.shortcut))
+	if shortcutWidth < 0 {
+		shortcutWidth = 0
+	}
+
+	leftWidth := max(1, width-shortcutWidth-2)
+	label := xansi.Truncate(item.label, leftWidth, "...")
+
+	row := lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		lipgloss.NewStyle().Width(leftWidth).Render(label),
+		"  ",
+		lipgloss.NewStyle().Width(shortcutWidth).Align(lipgloss.Right).Render(shortcut),
+	)
+
+	if selected {
+		return CommandPaletteSelectedStyle.Width(width).Render(row)
+	}
+	return CommandPaletteItemStyle.Width(width).Render(row)
 }
 
 func (m Model) startAgent(text string) tea.Cmd {

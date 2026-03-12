@@ -45,9 +45,14 @@ func (a *Agent) Run(ctx context.Context, userMsg string, send func(any)) {
 		Parts: []*genai.Part{{Text: userMsg}},
 	})
 
+	systemInstruction, guidelinesPath := a.systemInstruction()
+	if guidelinesPath != "" {
+		send(GuidelinesLoadedMsg{Path: guidelinesPath})
+	}
+
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{
-			Parts: []*genai.Part{{Text: "You are opencraft, a helpful AI coding assistant. You have access to tools to read files, write files, list directories, and run bash commands. Be concise and helpful."}},
+			Parts: []*genai.Part{{Text: systemInstruction}},
 		},
 		MaxOutputTokens: int32(a.cfg.MaxTokens),
 		Tools:           a.genTools,

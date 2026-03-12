@@ -20,7 +20,7 @@ func Load() (*Config, error) {
 
 	model := os.Getenv("OPENCRAFT_MODEL")
 	if model == "" {
-		model = "gemini-3-flash-preview"
+		model = "gemini-3.1-flash-lite-preview"
 	}
 
 	maxTokens := 8096

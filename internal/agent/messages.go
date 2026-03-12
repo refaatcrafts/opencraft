@@ -3,6 +3,11 @@ package agent
 // StreamChunkMsg carries a streamed text delta from the assistant.
 type StreamChunkMsg struct{ Delta string }
 
+// GuidelinesLoadedMsg indicates repository AGENTS.md guidelines were loaded.
+type GuidelinesLoadedMsg struct {
+	Path string
+}
+
 // ToolCallStartMsg signals that a tool call is beginning.
 type ToolCallStartMsg struct {
 	ToolName string

@@ -193,3 +193,42 @@ var InputCursorStyle = lipgloss.NewStyle().
 var SelectionStyle = lipgloss.NewStyle().
 	Background(colorSelection).
 	Foreground(colorSelectionFg)
+
+var CommandPaletteBoxStyle = lipgloss.NewStyle().
+	Background(colorBgRaised).
+	BorderStyle(lipgloss.RoundedBorder()).
+	BorderForeground(colorAccentIndigo).
+	Padding(1, 2)
+
+var CommandPaletteTitleStyle = lipgloss.NewStyle().
+	Foreground(colorAccentBlue).
+	Bold(true)
+
+var CommandPaletteIndexStyle = lipgloss.NewStyle().
+	Foreground(colorMuted)
+
+var CommandPaletteMutedStyle = lipgloss.NewStyle().
+	Foreground(colorSubtle)
+
+var CommandPaletteItemStyle = lipgloss.NewStyle().
+	Foreground(colorText).
+	Padding(0, 1)
+
+var CommandPaletteSelectedStyle = lipgloss.NewStyle().
+	Background(colorAccentIndigo).
+	Foreground(colorText).
+	Bold(true).
+	Padding(0, 1)
+
+var CommandPaletteShortcutStyle = lipgloss.NewStyle().
+	Foreground(colorMuted)
+
+var CommandPaletteDescStyle = lipgloss.NewStyle().
+	Foreground(colorMuted)
+
+var CommandPaletteScrollStyle = lipgloss.NewStyle().
+	Foreground(colorSubtle).
+	Align(lipgloss.Center)
+
+var CommandPaletteHintStyle = lipgloss.NewStyle().
+	Foreground(colorSubtle)

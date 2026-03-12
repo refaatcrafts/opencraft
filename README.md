@@ -15,10 +15,12 @@ OpenCraft is an interactive coding assistant that runs entirely in the terminal.
 
 - Chat-based coding workflow in a terminal UI
 - Gemini-powered agent loop with streaming responses
+- Automatic `AGENTS.md` guideline support (loads nearest `AGENTS.md` from current directory or parent directories)
 - Built-in tools for reading files, writing files, listing directories, and running bash commands
 - Visible tool activity during agent execution
 - Mouse-based text selection inside the chat area
 - Responsive Bubble Tea interface styled with Charm libraries
+- Slash command palette (`/`) with keyboard navigation and quick actions
 
 ## Built With
 
@@ -48,6 +50,30 @@ Run the app:
 ```bash
 go run main.go
 ```
+
+## AGENTS.md Guidelines
+
+OpenCraft now reads `AGENTS.md` automatically and injects its instructions into the model system prompt.
+
+- If `AGENTS.md` contains `<INSTRUCTIONS> ... </INSTRUCTIONS>`, only that block is used.
+- If no wrapper tags exist, the full file is used.
+- OpenCraft walks upward from the current working directory to find the nearest `AGENTS.md`.
+- While the agent is running, the status bar shows when `AGENTS.md` has been loaded.
+
+## Command Palette
+
+Type `/` in an empty input box to open the command palette.
+
+- Use `up/down` (or `j/k`) to move.
+- Press `enter` to run a command.
+- Press `esc` to close.
+
+Included commands:
+
+- Initialize `AGENTS.md` (AI-generated from repository context)
+- Clear chat history
+- Clear input
+- Copy current selection
 
 ## Current Tools
 
