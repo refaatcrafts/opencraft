@@ -4,6 +4,14 @@ Terminal-first AI coding agent built with Go, Gemini, and Charm's TUI stack.
 
 OpenCraft is an interactive coding assistant that runs entirely in the terminal. It combines a conversational interface with tool execution so the agent can inspect files, list directories, run shell commands, and write code while keeping the full workflow visible inside a clean text UI.
 
+<div align="center">
+
+### See it in action
+
+[![Watch the Demo](https://img.shields.io/badge/▶_Watch_Demo-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/posts/refaatcrafts_hi-in-the-past-few-days-ive-been-building-ugcPost-7437711606765236225-UmnA?utm_source=share&utm_medium=member_desktop&rcm=ACoAADRyd-ABGZKwpArYKcxBodfZnnZhmCmZ5Ug)
+
+</div>
+
 ## Why OpenCraft
 
 - Keeps the coding loop inside the terminal instead of moving to a browser chat
